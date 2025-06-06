@@ -119,14 +119,14 @@ func metricsReporter(results <-chan Result, done chan<- struct{}) {
 }
 
 func printTableHeader() {
-	fmt.Printf("%-8s %-10s %-8s %-10s %-10s %-10s %-10s %-10s %-10s\n",
-		"Time(s)", "Requests", "Errors", "Min", "Max", "Mean", "P50", "P99", "Throughput")
+	fmt.Printf("%-8s %-10s %-8s %-10s %-10s %-10s %-10s %-10s %-10s %-10s %-10s\n",
+		"Time(s)", "Requests", "Errors", "Min", "Max", "Mean", "P50", "P99", "P99.9", "P99.99", "Throughput")
 }
 
 func printPerSecondStats(elapsed time.Duration, count, errorCount, secCount, secError int, secHist *hdr.Histogram) {
 	if secCount == 0 {
-		fmt.Printf("%-8.1f %-10d %-8d %-10s %-10s %-10s %-10s %-10s %-10.2f\n",
-			elapsed.Seconds(), count, errorCount, "-", "-", "-", "-", "-", 0.0)
+		fmt.Printf("%-8.1f %-10d %-8d %-10s %-10s %-10s %-10s %-10s %-10s %-10s %-10.2f\n",
+			elapsed.Seconds(), count, errorCount, "-", "-", "-", "-", "-", "-", "-", 0.0)
 		return
 	}
 	secMin := time.Duration(secHist.Min()) * time.Microsecond
@@ -134,15 +134,17 @@ func printPerSecondStats(elapsed time.Duration, count, errorCount, secCount, sec
 	secMean := time.Duration(secHist.Mean()) * time.Microsecond
 	secP50 := time.Duration(secHist.ValueAtQuantile(50)) * time.Microsecond
 	secP99 := time.Duration(secHist.ValueAtQuantile(99)) * time.Microsecond
+	secP999 := time.Duration(secHist.ValueAtQuantile(99.9)) * time.Microsecond
+	secP9999 := time.Duration(secHist.ValueAtQuantile(99.99)) * time.Microsecond
 	secThrpt := float64(secCount)
-	fmt.Printf("%-8.1f %-10d %-8d %-10v %-10v %-10v %-10v %-10v %-10.2f\n",
-		elapsed.Seconds(), count, errorCount, secMin, secMax, secMean, secP50, secP99, secThrpt)
+	fmt.Printf("%-8.1f %-10d %-8d %-10v %-10v %-10v %-10v %-10v %-10v %-10v %-10.2f\n",
+		elapsed.Seconds(), count, errorCount, secMin, secMax, secMean, secP50, secP99, secP999, secP9999, secThrpt)
 }
 
 func printFinalSummaryRow(elapsed time.Duration, hist *hdr.Histogram, count, errorCount int) {
 	if count == 0 {
-		fmt.Printf("%-8s %-10d %-8d %-10s %-10s %-10s %-10s %-10s %-10.2f\n",
-			"TOTAL", 0, 0, "-", "-", "-", "-", "-", 0.0)
+		fmt.Printf("%-8s %-10d %-8d %-10s %-10s %-10s %-10s %-10s %-10s %-10s %-10.2f\n",
+			"TOTAL", 0, 0, "-", "-", "-", "-", "-", "-", "-", 0.0)
 		return
 	}
 	min := time.Duration(hist.Min()) * time.Microsecond
@@ -150,9 +152,11 @@ func printFinalSummaryRow(elapsed time.Duration, hist *hdr.Histogram, count, err
 	mean := time.Duration(hist.Mean()) * time.Microsecond
 	p50 := time.Duration(hist.ValueAtQuantile(50)) * time.Microsecond
 	p99 := time.Duration(hist.ValueAtQuantile(99)) * time.Microsecond
+	p999 := time.Duration(hist.ValueAtQuantile(99.9)) * time.Microsecond
+	p9999 := time.Duration(hist.ValueAtQuantile(99.99)) * time.Microsecond
 	throughput := float64(count) / elapsed.Seconds()
-	fmt.Printf("%-8s %-10d %-8d %-10v %-10v %-10v %-10v %-10v %-10.2f\n",
-		"TOTAL", count, errorCount, min, max, mean, p50, p99, throughput)
+	fmt.Printf("%-8s %-10d %-8d %-10v %-10v %-10v %-10v %-10v %-10v %-10v %-10.2f\n",
+		"TOTAL", count, errorCount, min, max, mean, p50, p99, p999, p9999, throughput)
 }
 
 // runWorkerPool starts the worker pool, dispatches jobs, and collects results
