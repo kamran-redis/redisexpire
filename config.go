@@ -17,6 +17,10 @@ type Config struct {
 	ValueSize   int
 	Expiry      int    // Expiry in seconds for SET keys, 0 means no expiry
 	DataType    string // "string" or "hash"
+
+	// New fields for absolute expiry
+	ExpiryAtRaw string    // Raw input for expiry-at (e.g., "5m")
+	ExpiryAt    time.Time // Calculated absolute expiry time
 }
 
 func ParseConfig() (*Config, error) {
@@ -32,6 +36,7 @@ func ParseConfig() (*Config, error) {
 	flag.IntVar(&cfg.ValueSize, "value-size", 128, "Size of value in bytes for SET commands")
 	flag.IntVar(&cfg.Expiry, "expiry", 0, "Expiry in seconds for SET keys (0 = no expiry)")
 	flag.StringVar(&cfg.DataType, "data-type", "string", "Data type to write: string or hash")
+	flag.StringVar(&cfg.ExpiryAtRaw, "expiry-at", "", "Absolute expiry for all keys, as a duration from start (e.g., 5m). Overrides -expiry if set.")
 
 	flag.Parse()
 
@@ -52,6 +57,15 @@ func ParseConfig() (*Config, error) {
 	}
 	if cfg.DataType != "string" && cfg.DataType != "hash" {
 		return nil, errors.New("data-type must be 'string' or 'hash'")
+	}
+
+	// Parse expiry-at if set
+	if cfg.ExpiryAtRaw != "" {
+		dur, err := time.ParseDuration(cfg.ExpiryAtRaw)
+		if err != nil {
+			return nil, errors.New("invalid expiry-at duration: " + err.Error())
+		}
+		cfg.ExpiryAt = time.Now().Add(dur)
 	}
 
 	return cfg, nil

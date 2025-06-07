@@ -24,10 +24,26 @@ type Result struct {
 	Err     error
 }
 
-// worker reads jobs from the jobs channel, executes a Redis SET command, and sends results
+// calculateExpiry returns the expiry duration to use for a key, based on config and current time.
+// Always returns at least 1 second if expiry is required.
+func calculateExpiry(cfg *Config) time.Duration {
+	if cfg.ExpiryAtRaw != "" {
+		delta := cfg.ExpiryAt.Sub(time.Now())
+		if delta > time.Second {
+			return delta
+		}
+		// If delta is <= 1s or negative, always set to 1s (minimum allowed)
+		return time.Second
+	}
+	if cfg.Expiry > 0 {
+		return time.Duration(cfg.Expiry) * time.Second
+	}
+	return 0
+}
+
+// worker reads jobs from the jobs channel, executes a Redis SET or HSET command, and sends results
 func worker(id int, jobs <-chan Job, results chan<- Result, wg *sync.WaitGroup, cfg *Config) {
 	defer wg.Done()
-	// Create a Redis client for this worker
 	addr := fmt.Sprintf("%s:%d", cfg.Host, cfg.Port)
 	rdb := redis.NewClient(&redis.Options{
 		Addr:     addr,
@@ -42,25 +58,98 @@ func worker(id int, jobs <-chan Job, results chan<- Result, wg *sync.WaitGroup, 
 		_, _ = rand.Read(value)
 		var err error
 		start := time.Now()
-		if cfg.DataType == "string" {
-			var expiry time.Duration
-			if cfg.Expiry > 0 {
-				expiry = time.Duration(cfg.Expiry) * time.Second
-			} else {
-				expiry = 0
-			}
+
+		expiry := calculateExpiry(cfg)
+
+		switch cfg.DataType {
+		case "string":
 			_, err = rdb.Set(ctx, key, value, expiry).Result()
-		} else if cfg.DataType == "hash" {
+		case "hash":
 			_, err = rdb.HSet(ctx, key, "field1", value).Result()
-			if err == nil && cfg.Expiry > 0 {
-				expiry := time.Duration(cfg.Expiry) * time.Second
+			if err == nil && expiry > 0 {
 				_, err = rdb.Expire(ctx, key, expiry).Result()
 			}
+		default:
+			err = fmt.Errorf("unsupported data type: %s", cfg.DataType)
 		}
+
 		latency := time.Since(start)
 		results <- Result{Latency: latency, Err: err}
 	}
 	_ = rdb.Close()
+}
+
+// MetricsRow holds all the metrics for a single reporting row.
+type MetricsRow struct {
+	TimeLabel  string
+	Requests   int
+	Errors     int
+	Min        string
+	Max        string
+	Mean       string
+	P50        string
+	P99        string
+	P999       string
+	P9999      string
+	Throughput float64
+}
+
+// formatMetricsRow returns a formatted string for a metrics row.
+func formatMetricsRow(row MetricsRow) string {
+	return fmt.Sprintf("%-8s %-10d %-8d %-10s %-10s %-10s %-10s %-10s %-10s %-10s %-10.2f",
+		row.TimeLabel, row.Requests, row.Errors, row.Min, row.Max, row.Mean, row.P50, row.P99, row.P999, row.P9999, row.Throughput)
+}
+
+// printTableHeader prints the column headers for the metrics table.
+func printTableHeader() {
+	headers := []string{"Time(s)", "Requests", "Errors", "Min", "Max", "Mean", "P50", "P99", "P99.9", "P99.99", "Throughput"}
+	fmt.Printf("%-8s %-10s %-8s %-10s %-10s %-10s %-10s %-10s %-10s %-10s %-10s\n",
+		headers[0], headers[1], headers[2], headers[3], headers[4], headers[5], headers[6], headers[7], headers[8], headers[9], headers[10])
+}
+
+// printPerSecondStats prints the per-second metrics row.
+func printPerSecondStats(elapsed time.Duration, count, errorCount, secCount, secError int, secHist *hdr.Histogram) {
+	row := MetricsRow{
+		TimeLabel:  fmt.Sprintf("%.1f", elapsed.Seconds()),
+		Requests:   count,
+		Errors:     errorCount,
+		Throughput: float64(secCount),
+	}
+	if secCount == 0 {
+		row.Min, row.Max, row.Mean, row.P50, row.P99, row.P999, row.P9999 = "-", "-", "-", "-", "-", "-", "-"
+	} else {
+		row.Min = (time.Duration(secHist.Min()) * time.Microsecond).String()
+		row.Max = (time.Duration(secHist.Max()) * time.Microsecond).String()
+		row.Mean = (time.Duration(secHist.Mean()) * time.Microsecond).String()
+		row.P50 = (time.Duration(secHist.ValueAtQuantile(50)) * time.Microsecond).String()
+		row.P99 = (time.Duration(secHist.ValueAtQuantile(99)) * time.Microsecond).String()
+		row.P999 = (time.Duration(secHist.ValueAtQuantile(99.9)) * time.Microsecond).String()
+		row.P9999 = (time.Duration(secHist.ValueAtQuantile(99.99)) * time.Microsecond).String()
+	}
+	fmt.Println(formatMetricsRow(row))
+}
+
+// printFinalSummaryRow prints the final summary metrics row.
+func printFinalSummaryRow(elapsed time.Duration, hist *hdr.Histogram, count, errorCount int) {
+	row := MetricsRow{
+		TimeLabel:  "TOTAL",
+		Requests:   count,
+		Errors:     errorCount,
+		Throughput: 0.0,
+	}
+	if count == 0 {
+		row.Min, row.Max, row.Mean, row.P50, row.P99, row.P999, row.P9999 = "-", "-", "-", "-", "-", "-", "-"
+	} else {
+		row.Min = (time.Duration(hist.Min()) * time.Microsecond).String()
+		row.Max = (time.Duration(hist.Max()) * time.Microsecond).String()
+		row.Mean = (time.Duration(hist.Mean()) * time.Microsecond).String()
+		row.P50 = (time.Duration(hist.ValueAtQuantile(50)) * time.Microsecond).String()
+		row.P99 = (time.Duration(hist.ValueAtQuantile(99)) * time.Microsecond).String()
+		row.P999 = (time.Duration(hist.ValueAtQuantile(99.9)) * time.Microsecond).String()
+		row.P9999 = (time.Duration(hist.ValueAtQuantile(99.99)) * time.Microsecond).String()
+		row.Throughput = float64(count) / elapsed.Seconds()
+	}
+	fmt.Println(formatMetricsRow(row))
 }
 
 // metricsReporter aggregates and prints real-time metrics from the results channel
@@ -116,47 +205,6 @@ func metricsReporter(results <-chan Result, done chan<- struct{}) {
 			perSecError = 0
 		}
 	}
-}
-
-func printTableHeader() {
-	fmt.Printf("%-8s %-10s %-8s %-10s %-10s %-10s %-10s %-10s %-10s %-10s %-10s\n",
-		"Time(s)", "Requests", "Errors", "Min", "Max", "Mean", "P50", "P99", "P99.9", "P99.99", "Throughput")
-}
-
-func printPerSecondStats(elapsed time.Duration, count, errorCount, secCount, secError int, secHist *hdr.Histogram) {
-	if secCount == 0 {
-		fmt.Printf("%-8.1f %-10d %-8d %-10s %-10s %-10s %-10s %-10s %-10s %-10s %-10.2f\n",
-			elapsed.Seconds(), count, errorCount, "-", "-", "-", "-", "-", "-", "-", 0.0)
-		return
-	}
-	secMin := time.Duration(secHist.Min()) * time.Microsecond
-	secMax := time.Duration(secHist.Max()) * time.Microsecond
-	secMean := time.Duration(secHist.Mean()) * time.Microsecond
-	secP50 := time.Duration(secHist.ValueAtQuantile(50)) * time.Microsecond
-	secP99 := time.Duration(secHist.ValueAtQuantile(99)) * time.Microsecond
-	secP999 := time.Duration(secHist.ValueAtQuantile(99.9)) * time.Microsecond
-	secP9999 := time.Duration(secHist.ValueAtQuantile(99.99)) * time.Microsecond
-	secThrpt := float64(secCount)
-	fmt.Printf("%-8.1f %-10d %-8d %-10v %-10v %-10v %-10v %-10v %-10v %-10v %-10.2f\n",
-		elapsed.Seconds(), count, errorCount, secMin, secMax, secMean, secP50, secP99, secP999, secP9999, secThrpt)
-}
-
-func printFinalSummaryRow(elapsed time.Duration, hist *hdr.Histogram, count, errorCount int) {
-	if count == 0 {
-		fmt.Printf("%-8s %-10d %-8d %-10s %-10s %-10s %-10s %-10s %-10s %-10s %-10.2f\n",
-			"TOTAL", 0, 0, "-", "-", "-", "-", "-", "-", "-", 0.0)
-		return
-	}
-	min := time.Duration(hist.Min()) * time.Microsecond
-	max := time.Duration(hist.Max()) * time.Microsecond
-	mean := time.Duration(hist.Mean()) * time.Microsecond
-	p50 := time.Duration(hist.ValueAtQuantile(50)) * time.Microsecond
-	p99 := time.Duration(hist.ValueAtQuantile(99)) * time.Microsecond
-	p999 := time.Duration(hist.ValueAtQuantile(99.9)) * time.Microsecond
-	p9999 := time.Duration(hist.ValueAtQuantile(99.99)) * time.Microsecond
-	throughput := float64(count) / elapsed.Seconds()
-	fmt.Printf("%-8s %-10d %-8d %-10v %-10v %-10v %-10v %-10v %-10v %-10v %-10.2f\n",
-		"TOTAL", count, errorCount, min, max, mean, p50, p99, p999, p9999, throughput)
 }
 
 // runWorkerPool starts the worker pool, dispatches jobs, and collects results

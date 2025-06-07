@@ -49,6 +49,7 @@ Run the benchmark tool with desired options:
 | `-rps`         | 0           | Requests per second (0 = unlimited)              |
 | `-value-size`  | 128         | Size of value in bytes for SET commands          |
 | `-expiry`      | 0           | Expiry in seconds for SET keys (0 = no expiry)   |
+| `-expiry-at`   | (empty)     | Absolute expiry for all keys, as a duration from start (e.g., 5m). Overrides -expiry. |
 | `-data-type`   | string      | Data type to write: string or hash               |
 
 ### Examples
@@ -66,6 +67,11 @@ Run the benchmark tool with desired options:
 **Use hash data type with 256-byte values and 60s expiry:**
 ```sh
 ./redisbench -data-type=hash -value-size=256 -expiry=60
+```
+
+**Set all keys to expire exactly 5 minutes from the start:**
+```sh
+./redisbench -expiry-at=5m
 ```
 
 ## Output
@@ -107,4 +113,10 @@ MIT
 
 ### 6. Simplicity and Extensibility
 - The codebase is kept simple and modular, making it easy to extend (e.g., to add new Redis commands or metrics).
-- Error handling and input validation are included to prevent misconfiguration and provide clear feedback. 
+- Error handling and input validation are included to prevent misconfiguration and provide clear feedback.
+
+## Notes on Expiry
+
+- If you use `-expiry-at`, all keys will be set to expire at the same absolute time, calculated as the specified duration from the start of the benchmark.
+- If both `-expiry` and `-expiry-at` are set, `-expiry-at` takes precedence.
+- The minimum expiry set is always 1 second, even if the calculated expiry is zero or negative (e.g., if the benchmark runs longer than the expiry window). 

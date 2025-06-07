@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"os"
+	"time"
 )
 
 func main() {
@@ -13,6 +14,11 @@ func main() {
 	}
 
 	fmt.Printf("Config: %+v\n", cfg)
+
+	if cfg.ExpiryAtRaw != "" {
+		fmt.Printf("All keys will expire at: %s (RFC3339)\n", cfg.ExpiryAt.Format(time.RFC3339))
+	}
+
 	fmt.Println("Starting benchmark...")
 
 	runWorkerPool(cfg.Concurrency, cfg.Requests, cfg)
