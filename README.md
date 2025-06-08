@@ -74,6 +74,21 @@ Run the benchmark tool with desired options:
 ./redisbench -expiry-at=5m
 ```
 
+```
+./redisbench --concurrency=50 --requests=2000000 -value-size=5  --data-type=string --expiry=1
+./redisbench --concurrency=50 --requests=2000000 -value-size=5  --data-type=hash 
+./redisbench --concurrency=50 --requests=2000000 -value-size=5  --data-type=hash --expiry=1
+./redisbench --concurrency=50 --requests=2000000 -value-size=5  --data-type=hash --expiry=120
+./redisbench --concurrency=50 --requests=5000000 -value-size=5  --data-type=hash -expiry-at=120s
+```
+
+```
+FT.CREATE idx ON HASH PREFIX 1 bench: SCHEMA field1 TAG
+CONFIG SET search-timeout  2000
+FT. idx "*" limit 0 1
+FT.AGGREGATE idx * LOAD 1 field1 limit 0 1
+```
+
 ## Output
 
 The tool prints real-time statistics every second, including:
