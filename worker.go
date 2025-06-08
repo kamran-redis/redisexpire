@@ -65,10 +65,17 @@ func worker(id int, jobs <-chan Job, results chan<- Result, wg *sync.WaitGroup, 
 		case "string":
 			_, err = rdb.Set(ctx, key, value, expiry).Result()
 		case "hash":
-			_, err = rdb.HSet(ctx, key, "field1", value).Result()
-			if err == nil && expiry > 0 {
-				_, err = rdb.Expire(ctx, key, expiry).Result()
+			pipe := rdb.Pipeline()
+			pipe.HSet(ctx, key, "field1", value).Result()
+			if expiry > 0 {
+				pipe.Expire(ctx, key, expiry).Result()
 			}
+			_, err = pipe.Exec(ctx)
+		case "empty":
+			// Do nothing, just measure the time
+			// Simulate a no-op for raw performance
+			// Optionally, you could add a minimal sleep or operation here if needed
+			// err remains nil
 		default:
 			err = fmt.Errorf("unsupported data type: %s", cfg.DataType)
 		}
@@ -165,7 +172,7 @@ func runWorkerPool(concurrency, totalRequests int, cfg *Config) []Result {
 	// Accurate rate limiting using token bucket
 	var limiter *rate.Limiter
 	if cfg.RPS > 0 {
-		limiter = rate.NewLimiter(rate.Limit(cfg.RPS), 1)
+		limiter = rate.NewLimiter(rate.Limit(cfg.RPS), 50)
 	}
 
 	// Dispatch jobs

@@ -50,7 +50,7 @@ Run the benchmark tool with desired options:
 | `-value-size`  | 128         | Size of value in bytes for SET commands          |
 | `-expiry`      | 0           | Expiry in seconds for SET keys (0 = no expiry)   |
 | `-expiry-at`   | (empty)     | Absolute expiry for all keys, as a duration from start (e.g., 5m). Overrides -expiry. |
-| `-data-type`   | string      | Data type to write: string or hash               |
+| `-data-type`   | string      | Data type to write: string, hash, or empty        |
 
 ### Examples
 
@@ -72,6 +72,11 @@ Run the benchmark tool with desired options:
 **Set all keys to expire exactly 5 minutes from the start:**
 ```sh
 ./redisbench -expiry-at=5m
+```
+
+**Run a dummy benchmark to measure raw framework overhead (no Redis commands):**
+```sh
+./redisbench -data-type=empty -concurrency=100 -requests=10000
 ```
 
 ```
@@ -125,6 +130,7 @@ MIT
 ### 5. Data Type and Expiry Support
 - The tool supports both string and hash data types, covering common Redis use cases.
 - Optional expiry for keys allows benchmarking of Redis' key expiration mechanism.
+- The `empty` data type can be used to measure the raw performance of the benchmarking framework itself, without sending any commands to Redis (useful for baseline comparison).
 
 ### 6. Simplicity and Extensibility
 - The codebase is kept simple and modular, making it easy to extend (e.g., to add new Redis commands or metrics).
