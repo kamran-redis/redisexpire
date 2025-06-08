@@ -9,7 +9,6 @@ import (
 
 	hdr "github.com/HdrHistogram/hdrhistogram-go"
 	redis "github.com/redis/go-redis/v9"
-	"golang.org/x/time/rate"
 )
 
 // Job represents a single benchmark operation (can be extended later)
@@ -169,36 +168,46 @@ func runWorkerPool(concurrency, totalRequests int, cfg *Config) []Result {
 		go worker(i, jobs, results, &wg, cfg)
 	}
 
-	// Accurate rate limiting using token bucket
-	var limiter *rate.Limiter
-	if cfg.RPS > 0 {
-		limiter = rate.NewLimiter(rate.Limit(cfg.RPS), 50)
-	}
-
 	// Dispatch jobs
 	if cfg.Duration > 0 {
 		fmt.Printf("Running for duration: %v\n", cfg.Duration)
-		timer := time.After(cfg.Duration)
+		end := time.Now().Add(cfg.Duration)
 		seq := 0
-	loop:
-		for {
-			select {
-			case <-timer:
-				break loop
-			default:
-				if limiter != nil {
-					_ = limiter.Wait(context.Background())
+		if cfg.RPS > 0 {
+			interval := time.Second / time.Duration(cfg.RPS)
+			next := time.Now()
+			for time.Now().Before(end) {
+				now := time.Now()
+				if now.Before(next) {
+					time.Sleep(next.Sub(now))
 				}
+				jobs <- Job{Seq: seq}
+				seq++
+				next = next.Add(interval)
+			}
+		} else {
+			// No RPS specified: fire as fast as possible for the duration
+			for time.Now().Before(end) {
 				jobs <- Job{Seq: seq}
 				seq++
 			}
 		}
 	} else {
-		for i := 0; i < totalRequests; i++ {
-			if limiter != nil {
-				_ = limiter.Wait(context.Background())
+		if cfg.RPS > 0 {
+			interval := time.Second / time.Duration(cfg.RPS)
+			next := time.Now()
+			for i := 0; i < totalRequests; i++ {
+				now := time.Now()
+				if now.Before(next) {
+					time.Sleep(next.Sub(now))
+				}
+				jobs <- Job{Seq: i}
+				next = next.Add(interval)
 			}
-			jobs <- Job{Seq: i}
+		} else {
+			for i := 0; i < totalRequests; i++ {
+				jobs <- Job{Seq: i}
+			}
 		}
 	}
 	close(jobs)
