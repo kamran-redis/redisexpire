@@ -119,6 +119,9 @@ func worker(id int, jobs <-chan Job, results chan<- Result, wg *sync.WaitGroup, 
 	for job := range jobs {
 		start := time.Now()
 		err := runner.Run(ctx, rdb, id, job, cfg)
+		if err != nil {
+			fmt.Printf("[worker %d] error on job %d: %v\n", id, job.Seq, err)
+		}
 		latency := time.Since(start)
 		results <- Result{Latency: latency, Err: err}
 	}
