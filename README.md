@@ -79,6 +79,27 @@ Run the benchmark tool with desired options:
 ./redisbench -data-type=empty -concurrency=100 -requests=10000
 ```
 
+**Example output**
+```
+./redisbench --concurrency=50 --duration=10s  -value-size=5  --data-type=string --expiry=1 --rps=190000
+Config: &{Host:localhost Port:6379 Password: Concurrency:50 Requests:10000 RPS:190000 Duration:10s ValueSize:5 Expiry:1 DataType:string ExpiryAtRaw: ExpiryAt:0001-01-01 00:00:00 +0000 UTC PipelineSize:1}
+Starting benchmark...
+Running for duration: 10s
+Time(s)  Requests   Errors   Min        Max        Mean       P50        P99        P99.9      P99.99     Throughput
+1.0      190009     0        9µs        22.639ms   160µs      122µs      584µs      1.406ms    21.487ms   190009.00
+2.0      378073     0        9µs        16.159ms   177µs      139µs      558µs      5.295ms    16.103ms   188064.00
+3.0      568712     0        9µs        26.751ms   231µs      164µs      1.295ms    13.135ms   26.703ms   190639.00
+4.0      760019     0        9µs        26.655ms   212µs      153µs      570µs      18.591ms   26.575ms   191307.00
+5.0      949809     0        9µs        27.311ms   228µs      168µs      1.214ms    13.615ms   26.719ms   189790.00
+6.0      1123836    0        7µs        26.815ms   281µs      193µs      1.371ms    17.423ms   26.703ms   174027.00
+7.0      1317190    0        10µs       26.655ms   247µs      180µs      1.119ms    21.423ms   26.607ms   193354.00
+8.0      1517246    0        9µs        26.511ms   215µs      160µs      1.255ms    20.943ms   22.223ms   200056.00
+9.0      1708603    0        8µs        27.391ms   224µs      163µs      1.267ms    14.807ms   26.847ms   191357.00
+10.0     1898983    0        10µs       31.791ms   219µs      154µs      1.178ms    14.015ms   26.911ms   190380.00
+Time(s)  Requests   Errors   Min        Max        Mean       P50        P99        P99.9      P99.99     Throughput
+TOTAL    1900058    0        7µs        31.791ms   219µs      160µs      1.182ms    13.367ms   26.655ms   189935.57
+```
+
 ```
 ./redisbench --concurrency=50 --requests=2000000 -value-size=5  --data-type=string --expiry=1
 ./redisbench --concurrency=50 --requests=2000000 -value-size=5  --data-type=hash 
