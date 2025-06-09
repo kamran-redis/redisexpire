@@ -40,6 +40,57 @@ func calculateExpiry(cfg *Config) time.Duration {
 	return 0
 }
 
+// JobRunner abstracts the logic for running a job of a specific data type
+type JobRunner interface {
+	Run(ctx context.Context, rdb *redis.Client, id int, job Job, cfg *Config) error
+}
+
+// StringJobRunner implements JobRunner for string data type
+type StringJobRunner struct{}
+
+func (r *StringJobRunner) Run(ctx context.Context, rdb *redis.Client, id int, job Job, cfg *Config) error {
+	key := fmt.Sprintf("bench:%d:%d", id, job.Seq)
+	value := make([]byte, cfg.ValueSize)
+	_, _ = rand.Read(value)
+	expiry := calculateExpiry(cfg)
+	_, err := rdb.Set(ctx, key, value, expiry).Result()
+	return err
+}
+
+// HashJobRunner implements JobRunner for hash data type
+type HashJobRunner struct{}
+
+func (r *HashJobRunner) Run(ctx context.Context, rdb *redis.Client, id int, job Job, cfg *Config) error {
+	key := fmt.Sprintf("bench:%d:%d", id, job.Seq)
+	value := make([]byte, cfg.ValueSize)
+	_, _ = rand.Read(value)
+	expiry := calculateExpiry(cfg)
+	pipe := rdb.Pipeline()
+	pipe.HSet(ctx, key, "field1", value).Result()
+	if expiry > 0 {
+		pipe.Expire(ctx, key, expiry).Result()
+	}
+	_, err := pipe.Exec(ctx)
+	return err
+}
+
+// EmptyJobRunner implements JobRunner for empty data type (no-op)
+type EmptyJobRunner struct{}
+
+func (r *EmptyJobRunner) Run(ctx context.Context, rdb *redis.Client, id int, job Job, cfg *Config) error {
+	// No-op
+	return nil
+}
+
+// unsupportedJobRunner always returns an error for unsupported data types
+type unsupportedJobRunner struct {
+	dataType string
+}
+
+func (r *unsupportedJobRunner) Run(ctx context.Context, rdb *redis.Client, id int, job Job, cfg *Config) error {
+	return fmt.Errorf("unsupported data type: %s", r.dataType)
+}
+
 // worker reads jobs from the jobs channel, executes a Redis SET or HSET command, and sends results
 func worker(id int, jobs <-chan Job, results chan<- Result, wg *sync.WaitGroup, cfg *Config) {
 	defer wg.Done()
@@ -51,34 +102,23 @@ func worker(id int, jobs <-chan Job, results chan<- Result, wg *sync.WaitGroup, 
 	})
 	ctx := context.Background()
 
+	// Select the appropriate JobRunner based on cfg.DataType
+	var runner JobRunner
+	switch cfg.DataType {
+	case "string":
+		runner = &StringJobRunner{}
+	case "hash":
+		runner = &HashJobRunner{}
+	case "empty":
+		runner = &EmptyJobRunner{}
+	default:
+		// If unsupported, use a runner that always returns error
+		runner = &unsupportedJobRunner{dataType: cfg.DataType}
+	}
+
 	for job := range jobs {
-		key := fmt.Sprintf("bench:%d:%d", id, job.Seq)
-		value := make([]byte, cfg.ValueSize)
-		_, _ = rand.Read(value)
-		var err error
 		start := time.Now()
-
-		expiry := calculateExpiry(cfg)
-
-		switch cfg.DataType {
-		case "string":
-			_, err = rdb.Set(ctx, key, value, expiry).Result()
-		case "hash":
-			pipe := rdb.Pipeline()
-			pipe.HSet(ctx, key, "field1", value).Result()
-			if expiry > 0 {
-				pipe.Expire(ctx, key, expiry).Result()
-			}
-			_, err = pipe.Exec(ctx)
-		case "empty":
-			// Do nothing, just measure the time
-			// Simulate a no-op for raw performance
-			// Optionally, you could add a minimal sleep or operation here if needed
-			// err remains nil
-		default:
-			err = fmt.Errorf("unsupported data type: %s", cfg.DataType)
-		}
-
+		err := runner.Run(ctx, rdb, id, job, cfg)
 		latency := time.Since(start)
 		results <- Result{Latency: latency, Err: err}
 	}
