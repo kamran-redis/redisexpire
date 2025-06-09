@@ -43,6 +43,7 @@ func calculateExpiry(cfg *Config) time.Duration {
 // JobRunner abstracts the logic for running a job of a specific data type
 type JobRunner interface {
 	Run(ctx context.Context, rdb *redis.Client, id int, job Job, cfg *Config) error
+	RunBatch(ctx context.Context, rdb *redis.Client, id int, jobs []Job, cfg *Config) []Result
 }
 
 // StringJobRunner implements JobRunner for string data type
@@ -91,6 +92,89 @@ func (r *unsupportedJobRunner) Run(ctx context.Context, rdb *redis.Client, id in
 	return fmt.Errorf("unsupported data type: %s", r.dataType)
 }
 
+// Implement RunBatch for StringJobRunner
+func (r *StringJobRunner) RunBatch(ctx context.Context, rdb *redis.Client, id int, jobs []Job, cfg *Config) []Result {
+	pipe := rdb.Pipeline()
+	cmds := make([]*redis.StatusCmd, 0, len(jobs))
+	sendTimes := make([]time.Time, 0, len(jobs))
+	for _, job := range jobs {
+		key := fmt.Sprintf("bench:%d:%d", id, job.Seq)
+		value := make([]byte, cfg.ValueSize)
+		_, _ = rand.Read(value)
+		expiry := calculateExpiry(cfg)
+		sendTimes = append(sendTimes, time.Now())
+		cmd := pipe.Set(ctx, key, value, expiry)
+		cmds = append(cmds, cmd)
+	}
+	_, err := pipe.Exec(ctx)
+	results := make([]Result, len(jobs))
+	for i, cmd := range cmds {
+		latency := time.Since(sendTimes[i])
+		cmdErr := err
+		if cmd.Err() != nil {
+			cmdErr = cmd.Err()
+		}
+		results[i] = Result{Latency: latency, Err: cmdErr}
+	}
+	return results
+}
+
+// Implement RunBatch for HashJobRunner
+func (r *HashJobRunner) RunBatch(ctx context.Context, rdb *redis.Client, id int, jobs []Job, cfg *Config) []Result {
+	pipe := rdb.Pipeline()
+	startTimes := make([]time.Time, len(jobs))
+	cmdsPerJob := make([]int, len(jobs)) // 1 or 2 per job
+	for i, job := range jobs {
+		key := fmt.Sprintf("bench:%d:%d", id, job.Seq)
+		value := make([]byte, cfg.ValueSize)
+		_, _ = rand.Read(value)
+		expiry := calculateExpiry(cfg)
+		startTimes[i] = time.Now()
+		pipe.HSet(ctx, key, "field1", value)
+		cmdsPerJob[i] = 1
+		if expiry > 0 {
+			pipe.Expire(ctx, key, expiry)
+			cmdsPerJob[i] = 2
+		}
+	}
+	cmds, _ := pipe.Exec(ctx)
+	results := make([]Result, len(jobs))
+	idx := 0
+	for i := range jobs {
+		var jobErr error
+		for j := 0; j < cmdsPerJob[i]; j++ {
+			if cmds[idx].Err() != nil {
+				if jobErr == nil {
+					jobErr = cmds[idx].Err()
+				} else {
+					jobErr = fmt.Errorf("%v; %v", jobErr, cmds[idx].Err())
+				}
+			}
+			idx++
+		}
+		latency := time.Since(startTimes[i])
+		results[i] = Result{Latency: latency, Err: jobErr}
+	}
+	return results
+}
+
+// Implement RunBatch for EmptyJobRunner and unsupportedJobRunner
+func (r *EmptyJobRunner) RunBatch(ctx context.Context, rdb *redis.Client, id int, jobs []Job, cfg *Config) []Result {
+	results := make([]Result, len(jobs))
+	for i := range jobs {
+		results[i] = Result{Latency: 0, Err: nil}
+	}
+	return results
+}
+
+func (r *unsupportedJobRunner) RunBatch(ctx context.Context, rdb *redis.Client, id int, jobs []Job, cfg *Config) []Result {
+	results := make([]Result, len(jobs))
+	for i := range jobs {
+		results[i] = Result{Latency: 0, Err: fmt.Errorf("unsupported data type: %s", r.dataType)}
+	}
+	return results
+}
+
 // worker reads jobs from the jobs channel, executes a Redis SET or HSET command, and sends results
 func worker(id int, jobs <-chan Job, results chan<- Result, wg *sync.WaitGroup, cfg *Config) {
 	defer wg.Done()
@@ -102,7 +186,6 @@ func worker(id int, jobs <-chan Job, results chan<- Result, wg *sync.WaitGroup, 
 	})
 	ctx := context.Background()
 
-	// Select the appropriate JobRunner based on cfg.DataType
 	var runner JobRunner
 	switch cfg.DataType {
 	case "string":
@@ -112,18 +195,41 @@ func worker(id int, jobs <-chan Job, results chan<- Result, wg *sync.WaitGroup, 
 	case "empty":
 		runner = &EmptyJobRunner{}
 	default:
-		// If unsupported, use a runner that always returns error
 		runner = &unsupportedJobRunner{dataType: cfg.DataType}
 	}
 
-	for job := range jobs {
-		start := time.Now()
-		err := runner.Run(ctx, rdb, id, job, cfg)
-		if err != nil {
-			fmt.Printf("[worker %d] error on job %d: %v\n", id, job.Seq, err)
+	batchSize := 1
+	if cfg.Pipeline > 0 {
+		batchSize = cfg.Pipeline
+	}
+	batch := make([]Job, 0, batchSize)
+	for {
+		batch = batch[:0]
+		for len(batch) < batchSize {
+			job, ok := <-jobs
+			if !ok {
+				break
+			}
+			batch = append(batch, job)
 		}
-		latency := time.Since(start)
-		results <- Result{Latency: latency, Err: err}
+		if len(batch) == 0 {
+			break
+		}
+
+		// If batch size is 1, use the simpler non-batch method for efficiency and accuracy
+		if batchSize == 1 {
+			start := time.Now()
+			err := runner.Run(ctx, rdb, id, batch[0], cfg)
+			latency := time.Since(start)
+			results <- Result{Latency: latency, Err: err}
+			continue
+		}
+
+		// Otherwise, use batch pipelining
+		resultsBatch := runner.RunBatch(ctx, rdb, id, batch, cfg)
+		for _, res := range resultsBatch {
+			results <- res
+		}
 	}
 	_ = rdb.Close()
 }

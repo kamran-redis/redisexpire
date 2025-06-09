@@ -23,6 +23,7 @@ type Config struct {
 	ExpiryAt    time.Time // Calculated absolute expiry time
 
 	PipelineSize int // Number of commands per pipeline (1 = no pipelining)
+	Pipeline     int // Number of commands per pipeline batch (for pipelining)
 }
 
 func ParseConfig() (*Config, error) {
@@ -40,6 +41,7 @@ func ParseConfig() (*Config, error) {
 	flag.StringVar(&cfg.DataType, "data-type", "string", "Data type to write: string, hash, or empty")
 	flag.StringVar(&cfg.ExpiryAtRaw, "expiry-at", "", "Absolute expiry for all keys, as a duration from start (e.g., 5m). Overrides -expiry if set.")
 	flag.IntVar(&cfg.PipelineSize, "pipeline-size", 1, "Number of commands per pipeline (1 = no pipelining)")
+	flag.IntVar(&cfg.Pipeline, "pipeline", 1, "Number of commands per pipeline batch (for pipelining)")
 
 	flag.Parse()
 
@@ -63,6 +65,9 @@ func ParseConfig() (*Config, error) {
 	}
 	if cfg.PipelineSize < 1 {
 		return nil, errors.New("pipeline-size must be >= 1")
+	}
+	if cfg.Pipeline < 1 {
+		return nil, errors.New("pipeline must be >= 1")
 	}
 
 	// Parse expiry-at if set

@@ -51,6 +51,7 @@ Run the benchmark tool with desired options:
 | `-expiry`      | 0           | Expiry in seconds for SET keys (0 = no expiry)   |
 | `-expiry-at`   | (empty)     | Absolute expiry for all keys, as a duration from start (e.g., 5m). Overrides -expiry. |
 | `-data-type`   | string      | Data type to write: string, hash, or empty        |
+| `-pipeline`    | 1           | Number of commands to send in each pipeline batch  |
 
 ### Examples
 
@@ -162,3 +163,36 @@ MIT
 - If you use `-expiry-at`, all keys will be set to expire at the same absolute time, calculated as the specified duration from the start of the benchmark.
 - If both `-expiry` and `-expiry-at` are set, `-expiry-at` takes precedence.
 - The minimum expiry set is always 1 second, even if the calculated expiry is zero or negative (e.g., if the benchmark runs longer than the expiry window). 
+
+## Pipelining and Batch Size
+
+This tool supports Redis pipelining for higher throughput and lower network latency. You can control the number of commands sent in each pipeline batch using the `--pipeline` command-line argument.
+
+### Usage
+
+```
+--pipeline N
+```
+
+Where `N` is the number of commands to send in each pipeline batch. The default is 1 (no pipelining). For example, to use a batch size of 50:
+
+```
+./redisbench --pipeline 50
+```
+
+### Logic and Rationale
+
+- **Pipelining**: Multiple Redis commands are grouped and sent together, reducing round-trip time and increasing throughput.
+- **Batching**: Jobs are collected into batches of size `N` and executed in a single pipeline.
+- **Latency Measurement**:
+  - For string jobs, latency is measured per command.
+  - For hash jobs (which use both HSET and EXPIRE), both commands are treated as a unit: latency is measured from before the first command is enqueued to after the last reply is received. If either command fails, the error is reported for the job.
+- **Error Handling**: For hash jobs, if either HSET or EXPIRE fails, the error(s) are reported for the job.
+
+### Example
+
+```
+./redisbench --pipeline 100 --datatype hash --requests 10000
+```
+
+This will send 10000 hash jobs in batches of 100 commands per pipeline. 

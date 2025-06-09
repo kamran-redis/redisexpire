@@ -21,6 +21,9 @@ func main() {
 
 	fmt.Println("Starting benchmark...")
 
+	//flag.IntVar(&cfg.Pipeline, "pipeline", 1, "Number of commands per pipeline batch (for pipelining)")
+	//flag.Parse()
+
 	runWorkerPool(cfg.Concurrency, cfg.Requests, cfg)
 
 	fmt.Println("Benchmark complete.")
