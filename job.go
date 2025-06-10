@@ -10,16 +10,14 @@ import (
 )
 
 // job.go
-// Contains Job, Result, JobRunner interface, and all JobRunner implementations for the Redis benchmarking tool.
-// Provides the abstraction and logic for different Redis data types and job execution.
+// Redis benchmarking job and runner abstractions
 
 // Job represents a single benchmark operation (can be extended later)
 type Job struct {
 	Seq int // sequence number for key uniqueness
 }
 
-// Result represents the outcome of a single operation
-// (latency in nanoseconds, error if any)
+// Result represents the outcome of a single operation (latency in nanoseconds, error if any)
 type Result struct {
 	Latency time.Duration
 	Err     error
@@ -31,69 +29,85 @@ type JobRunner interface {
 	RunBatch(ctx context.Context, rdb *redis.Client, id int, jobs []Job, cfg *Config) []Result
 }
 
-// StringJobRunner implements JobRunner for string data type
+// --- Helper Functions ---
+
+// generateKey creates a Redis key for a given runner id and job sequence
+func generateKey(id, seq int) string {
+	return fmt.Sprintf("bench:%d:%d", id, seq)
+}
+
+// generateValue creates a random value of the given size
+func generateValue(size int) []byte {
+	value := make([]byte, size)
+	_, _ = rand.Read(value)
+	return value
+}
+
+// --- StringJobRunner Implementation ---
+
 type StringJobRunner struct{}
 
+// Run executes a single SET operation with expiry
 func (r *StringJobRunner) Run(ctx context.Context, rdb *redis.Client, id int, job Job, cfg *Config) error {
-	key := fmt.Sprintf("bench:%d:%d", id, job.Seq)
-	value := make([]byte, cfg.ValueSize)
-	_, _ = rand.Read(value)
+	key := generateKey(id, job.Seq)
+	value := generateValue(cfg.ValueSize)
 	expiry := calculateExpiry(cfg)
 	_, err := rdb.Set(ctx, key, value, expiry).Result()
 	return err
 }
 
+// RunBatch executes a batch of SET operations using pipelining
 func (r *StringJobRunner) RunBatch(ctx context.Context, rdb *redis.Client, id int, jobs []Job, cfg *Config) []Result {
 	pipe := rdb.Pipeline()
 	cmds := make([]*redis.StatusCmd, 0, len(jobs))
 	sendTimes := make([]time.Time, 0, len(jobs))
 	for _, job := range jobs {
-		key := fmt.Sprintf("bench:%d:%d", id, job.Seq)
-		value := make([]byte, cfg.ValueSize)
-		_, _ = rand.Read(value)
+		key := generateKey(id, job.Seq)
+		value := generateValue(cfg.ValueSize)
 		expiry := calculateExpiry(cfg)
 		sendTimes = append(sendTimes, time.Now())
 		cmd := pipe.Set(ctx, key, value, expiry)
 		cmds = append(cmds, cmd)
 	}
-	_, err := pipe.Exec(ctx)
+	_, pipeErr := pipe.Exec(ctx)
 	results := make([]Result, len(jobs))
 	for i, cmd := range cmds {
 		latency := time.Since(sendTimes[i])
-		cmdErr := err
+		err := pipeErr
 		if cmd.Err() != nil {
-			cmdErr = cmd.Err()
+			err = cmd.Err()
 		}
-		results[i] = Result{Latency: latency, Err: cmdErr}
+		results[i] = Result{Latency: latency, Err: err}
 	}
 	return results
 }
 
-// HashJobRunner implements JobRunner for hash data type
+// --- HashJobRunner Implementation ---
+
 type HashJobRunner struct{}
 
+// Run executes a single HSET (and optional EXPIRE) operation
 func (r *HashJobRunner) Run(ctx context.Context, rdb *redis.Client, id int, job Job, cfg *Config) error {
-	key := fmt.Sprintf("bench:%d:%d", id, job.Seq)
-	value := make([]byte, cfg.ValueSize)
-	_, _ = rand.Read(value)
+	key := generateKey(id, job.Seq)
+	value := generateValue(cfg.ValueSize)
 	expiry := calculateExpiry(cfg)
 	pipe := rdb.Pipeline()
-	pipe.HSet(ctx, key, "field1", value).Result()
+	pipe.HSet(ctx, key, "field1", value)
 	if expiry > 0 {
-		pipe.Expire(ctx, key, expiry).Result()
+		pipe.Expire(ctx, key, expiry)
 	}
 	_, err := pipe.Exec(ctx)
 	return err
 }
 
+// RunBatch executes a batch of HSET (and optional EXPIRE) operations using pipelining
 func (r *HashJobRunner) RunBatch(ctx context.Context, rdb *redis.Client, id int, jobs []Job, cfg *Config) []Result {
 	pipe := rdb.Pipeline()
 	startTimes := make([]time.Time, len(jobs))
 	cmdsPerJob := make([]int, len(jobs)) // 1 or 2 per job
 	for i, job := range jobs {
-		key := fmt.Sprintf("bench:%d:%d", id, job.Seq)
-		value := make([]byte, cfg.ValueSize)
-		_, _ = rand.Read(value)
+		key := generateKey(id, job.Seq)
+		value := generateValue(cfg.ValueSize)
 		expiry := calculateExpiry(cfg)
 		startTimes[i] = time.Now()
 		pipe.HSet(ctx, key, "field1", value)
@@ -124,7 +138,8 @@ func (r *HashJobRunner) RunBatch(ctx context.Context, rdb *redis.Client, id int,
 	return results
 }
 
-// EmptyJobRunner implements JobRunner for empty data type (no-op)
+// --- EmptyJobRunner Implementation (No-op) ---
+
 type EmptyJobRunner struct{}
 
 func (r *EmptyJobRunner) Run(ctx context.Context, rdb *redis.Client, id int, job Job, cfg *Config) error {
@@ -139,7 +154,8 @@ func (r *EmptyJobRunner) RunBatch(ctx context.Context, rdb *redis.Client, id int
 	return results
 }
 
-// unsupportedJobRunner always returns an error for unsupported data types
+// --- UnsupportedJobRunner Implementation ---
+
 type unsupportedJobRunner struct {
 	dataType string
 }
