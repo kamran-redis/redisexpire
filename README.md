@@ -112,7 +112,7 @@ TOTAL    1900058    0        7µs        31.791ms   219µs      160µs      1.18
 ```
 FT.CREATE idx ON HASH PREFIX 1 bench: SCHEMA field1 TAG
 CONFIG SET search-timeout  2000
-FT. idx "*" limit 0 1
+FT.SEARCH idx "*" limit 0 1
 FT.AGGREGATE idx * LOAD 1 field1 limit 0 1
 ```
 
